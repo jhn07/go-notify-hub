@@ -12,7 +12,7 @@ A microservice for sending notifications through multiple channels (Telegram, Em
 
 1. Clone the repository:
 ```bash
-git clone <your-repo>
+git clone https://github.com/jhn07/go-notify-hub
 cd go-notify-hub
 ```
 
