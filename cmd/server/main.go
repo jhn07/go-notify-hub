@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"notify-hub/internal/api"
+	"notify-hub/internal/db"
 	"notify-hub/internal/queue"
 	"os"
 	"os/signal"
@@ -14,6 +15,19 @@ import (
 func main() {
 	addr := getEnv("ADDR", ":8080")
 	rabbitURL := getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	dbURL := getEnv("DATABASE_URL", "postgres://postgres:notifyhub@localhost:5432/notifyhub?sslmode=disable")
+
+	// Connect to PostgreSQL
+	if err := db.Connect(dbURL); err != nil {
+		log.Fatalf("❌ Failed to connect to PostgreSQL: %v", err)
+	}
+	defer db.DB.Close()
+
+	// Create tables (only API creates tables)
+	if err := db.CreateTables(); err != nil {
+		log.Fatalf("❌ Failed to create tables: %v", err)
+	}
+	defer db.DB.Close()
 
 	publisher, err := queue.ConnectPublisher(rabbitURL)
 	if err != nil {

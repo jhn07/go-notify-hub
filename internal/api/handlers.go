@@ -2,14 +2,19 @@ package api
 
 import (
 	cryptoRand "crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"notify-hub/internal/db"
 	"notify-hub/internal/models"
 	"notify-hub/internal/queue"
 	"strings"
+
+	"github.com/lib/pq"
 )
 
 var publisher *queue.Publisher
@@ -77,6 +82,14 @@ func SendNotificationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Save to database
+	if err := saveToDatabase(
+		msgID, req.UserID, req.Message, models.StatusQueued, req.Channels,
+	); err != nil {
+		http.Error(w, "failed to save to database: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if publisher == nil {
 		http.Error(w, "queue not initialized", http.StatusInternalServerError)
 		return
@@ -84,6 +97,7 @@ func SendNotificationHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Publish to RabbitMQ queue
 	err = publisher.Publish(queue.NotificationMessage{
+		ID:       msgID,
 		UserID:   req.UserID,
 		Message:  req.Message,
 		Channels: req.Channels,
@@ -102,6 +116,26 @@ func SendNotificationHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted) // 202 Accepted - queued for processing
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func StatusHandler(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/status/")
+	if id == "" {
+		http.Error(w, "message ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var status string
+	err := db.DB.QueryRow("SELECT status FROM notifications WHERE id = $1", id).Scan(&status)
+	if err == sql.ErrNoRows {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": status})
 }
 
 func validateRequest(req models.NotificationRequest) error {
@@ -129,10 +163,24 @@ func validateRequest(req models.NotificationRequest) error {
 	return nil
 }
 
+func saveToDatabase(msgId, userId, message string, status models.Status, channels []string) error {
+	_, err := db.DB.Exec(`
+		INSERT INTO notifications (id, user_id, message, channels, status)
+		VALUES ($1, $2, $3, $4, $5)
+	`, msgId, userId, message, pq.Array(channels), status.String())
+
+	if err != nil {
+		return fmt.Errorf("failed to save to database: %w", err)
+	}
+
+	return nil
+}
+
 // Router creates and configures the HTTP router
 func Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthCheckHandler)
 	mux.HandleFunc("/send", SendNotificationHandler)
+	mux.HandleFunc("/status/", StatusHandler)
 	return LoggingMiddleware(mux)
 }

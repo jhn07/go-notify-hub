@@ -13,6 +13,7 @@ type Publisher struct {
 }
 
 type NotificationMessage struct {
+	ID       string   `json:"id"`
 	UserID   string   `json:"user_id"`
 	Message  string   `json:"message"`
 	Channels []string `json:"channels"`
